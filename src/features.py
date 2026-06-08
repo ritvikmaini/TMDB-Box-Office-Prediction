@@ -103,6 +103,24 @@ def _frequency_encode(train_lists, test_lists, min_count=10):
     return keep
 
 
+def _add_interaction_features(combined):
+    """Non-leaky interaction / inflation features computed on the combined frame.
+
+    These use only feature columns (never the target), so computing them across
+    the union of train+test introduces no target leakage and keeps train/test
+    statistics consistent.
+    """
+    d = combined
+    year_budget_mean = d.groupby("release_year")["budget"].transform("mean").replace(0, np.nan)
+    d["budget_year_ratio"] = (d["budget"] / year_budget_mean).fillna(0)
+    d["log_popularity"] = np.log1p(d["popularity"])
+    d["budget_x_popularity"] = d["log_budget"] * d["log_popularity"]
+    d["runtime_x_budget"] = d["runtime"] * d["log_budget"]
+    year_pop_mean = d.groupby("release_year")["popularity"].transform("mean").replace(0, np.nan)
+    d["pop_year_ratio"] = (d["popularity"] / year_pop_mean).fillna(0)
+    return d
+
+
 def build_features(train_df, test_df):
     """Build aligned numeric feature matrices.
 
@@ -129,6 +147,15 @@ def build_features(train_df, test_df):
     medians = pd.concat([X_train, X_test]).median(numeric_only=True)
     X_train = X_train.fillna(medians).fillna(0)
     X_test = X_test.fillna(medians).fillna(0)
+
+    # interaction / inflation features on the combined (clean) frame, then re-split
+    n_train = len(X_train)
+    combined = _add_interaction_features(
+        pd.concat([X_train, X_test], ignore_index=True))
+    combined = combined.replace([np.inf, -np.inf], 0).fillna(0)
+    X_train = combined.iloc[:n_train].reset_index(drop=True)
+    X_test = combined.iloc[n_train:].reset_index(drop=True)
+    X_train.index = y_train.index
 
     feature_names = list(X_train.columns)
     return X_train, y_train, X_test, feature_names

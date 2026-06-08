@@ -27,9 +27,9 @@ def make_models(seed=42):
             random_state=seed, n_jobs=-1, eval_metric="rmse",
             early_stopping_rounds=100, verbosity=0),
         "catboost": CatBoostRegressor(
-            iterations=3000, learning_rate=0.02, depth=6, l2_leaf_reg=3.0,
+            iterations=5000, learning_rate=0.02, depth=5, l2_leaf_reg=5.0,
             random_seed=seed, loss_function="RMSE", eval_metric="RMSE",
-            early_stopping_rounds=100, verbose=False),
+            early_stopping_rounds=150, verbose=False),
     }
 
 
@@ -70,7 +70,11 @@ def train_oof(name, X, y, X_test, folds=5, seed=42):
 
 
 def blend(oof_dict, y, test_dict):
-    """Blend OOF predictions. Try non-negative ridge stacking; fall back to mean.
+    """Blend OOF predictions, choosing the lowest-OOF-RMSLE option among:
+    simple mean, non-negative ridge stack, and the best single model.
+
+    Including the best single model as a candidate guarantees the blend never
+    scores worse than the strongest individual model.
 
     Returns (blended_oof_log, blended_test_log, weights_dict).
     """
@@ -79,22 +83,28 @@ def blend(oof_dict, y, test_dict):
     oof_mat = np.column_stack([oof_dict[n] for n in names])
     test_mat = np.column_stack([test_dict[n] for n in names])
 
-    mean_oof = oof_mat.mean(axis=1)
-    mean_test = test_mat.mean(axis=1)
-    best_oof, best_test = mean_oof, mean_test
-    best_score = rmsle(y_rev, np.expm1(mean_oof))
+    # candidate 1: simple mean
+    best_oof = oof_mat.mean(axis=1)
+    best_test = test_mat.mean(axis=1)
+    best_score = rmsle(y_rev, np.expm1(best_oof))
     best_weights = {n: 1.0 / len(names) for n in names}
 
+    # candidate 2: non-negative ridge stack
     ridge = Ridge(alpha=1.0, positive=True)
     ridge.fit(oof_mat, np.asarray(y))
     w = np.clip(ridge.coef_, 0, None)
     if w.sum() > 0:
         w = w / w.sum()
-        stack_oof = oof_mat @ w
-        stack_test = test_mat @ w
-        stack_score = rmsle(y_rev, np.expm1(stack_oof))
+        stack_score = rmsle(y_rev, np.expm1(oof_mat @ w))
         if stack_score < best_score:
-            best_oof, best_test, best_score = stack_oof, stack_test, stack_score
+            best_oof, best_test, best_score = oof_mat @ w, test_mat @ w, stack_score
             best_weights = {n: float(wi) for n, wi in zip(names, w)}
+
+    # candidate 3: best single model (never let the blend regress below it)
+    for i, n in enumerate(names):
+        single_score = rmsle(y_rev, np.expm1(oof_dict[n]))
+        if single_score < best_score:
+            best_oof, best_test, best_score = oof_dict[n], test_dict[n], single_score
+            best_weights = {m: (1.0 if m == n else 0.0) for m in names}
 
     return best_oof, best_test, best_weights
