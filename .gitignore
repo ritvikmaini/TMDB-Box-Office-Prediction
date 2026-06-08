@@ -1,0 +1,7 @@
+data/*.csv
+data/submission.csv
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+catboost_info/
+.DS_Store
