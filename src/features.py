@@ -49,7 +49,7 @@ def _add_features(df):
     out["release_day"] = day.fillna(0).astype(int)
     out["release_year"] = year.fillna(0).astype(int).map(
         lambda y: parse_year(y) if y > 0 else 0)
-    dt = pd.to_datetime(df["release_date"], errors="coerce")
+    dt = pd.to_datetime(df["release_date"], format="mixed", errors="coerce")
     out["release_dayofweek"] = dt.dt.dayofweek.fillna(-1).astype(int)
     out["release_quarter"] = dt.dt.quarter.fillna(0).astype(int)
     ref_year = out.loc[out["release_year"] > 0, "release_year"].max()
